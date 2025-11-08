@@ -11,7 +11,7 @@ class EnhancedKMeans(BaseEstimator, ClusterMixin):
     outliers from the dataset before applying the standard K-Means algorithm to the
     cleaned data. Outliers are assigned a cluster label of -1.
     """
-    def __init__(self, n_clusters=8, contamination=0.1, random_state=None, n_init=10):
+    def __init__(self, n_clusters=5, contamination=0.1, random_state=None, ):
         """
         Initializes the EnhancedKMeans algorithm.
 
@@ -19,12 +19,12 @@ class EnhancedKMeans(BaseEstimator, ClusterMixin):
         - n_clusters (int): The number of clusters for the K-Means algorithm.
         - contamination (float): The proportion of outliers to detect in the Isolation Forest.
         - random_state (int): A seed for the random number generators for reproducibility.
-        - n_init (int): Number of times the k-means algorithm will be run with different seeds.
+        
         """
         self.n_clusters = n_clusters
         self.contamination = contamination
         self.random_state = random_state
-        self.n_init = n_init
+        
 
         # Initialize the two core algorithms that this class will manage
         self.iso_forest = IsolationForest(
@@ -34,7 +34,7 @@ class EnhancedKMeans(BaseEstimator, ClusterMixin):
         self.kmeans = KMeans(
             n_clusters=self.n_clusters,
             random_state=self.random_state,
-            n_init=self.n_init
+            
         )
 
         # These will be populated after fitting

@@ -2,17 +2,19 @@ import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score, davies_bouldin_score
 from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA  # NEW: Import PCA
+from sklearn.decomposition import PCA
 from kneed import KneeLocator
 
-# --- NEW: Import your custom EnhancedKMeans algorithm ---
+# --- Import your custom EnhancedKMeans algorithm ---
 from enhanced_kmeans import EnhancedKMeans
 
 def prepare_data_for_clustering(df, n_components=None):
     """
-    Extracts features from timestamp, scales the data, and applies PCA.
+    Extracts features from timestamp, scales the data, and applies PCA if requested.
     """
-    df_copy = df.copy()
+    # Use a deep copy to ensure the original DataFrame is not modified.
+    df_copy = df.copy(deep=True) 
+    
     df_copy['hour'] = df_copy['timestamp'].dt.hour
     df_copy['day_of_week'] = df_copy['timestamp'].dt.dayofweek
     
@@ -23,18 +25,23 @@ def prepare_data_for_clustering(df, n_components=None):
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
-    # Step 2: Apply PCA if a number of components is specified
-    if n_components is not None:
+    # Step 2: Apply PCA if n_components is specified and > 0
+    if n_components is not None and n_components > 0:
         pca = PCA(n_components=n_components, random_state=42)
         X_processed = pca.fit_transform(X_scaled)
+        
+        # Add PCA component columns to the DataFrame for visualization
+        for i in range(n_components):
+            df_copy[f'principal_component_{i+1}'] = X_processed[:, i]
     else:
+        # If no PCA, return the scaled data
         X_processed = X_scaled
         
     return X_processed, df_copy
 
 def find_optimal_k(scaled_data, k_range=(2, 11)):
     """
-    Runs K-Means for a range of k and finds the optimal k using the Elbow Method.
+    Finds the optimal k using the Elbow Method on the base scaled data (without PCA).
     """
     inertias = []
     ks = range(k_range[0], k_range[1])
@@ -51,57 +58,47 @@ def find_optimal_k(scaled_data, k_range=(2, 11)):
         
     return inertias, optimal_k
 
-def run_standard_analysis(df, n_clusters, n_components=None):
-    """
-    Runs the standard K-Means analysis with optional PCA.
-    """
-    X_processed, df_with_features = prepare_data_for_clustering(df, n_components)
-    
-    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-    labels = kmeans.fit_predict(X_processed)
-    
-    results = {
-        'metrics': {
-            'inertia': kmeans.inertia_,
-            'silhouette': silhouette_score(X_processed, labels),
-            'dbi': davies_bouldin_score(X_processed, labels)
-        },
-        'data': df_with_features.assign(cluster=labels)
-    }
-    return results
+# --- STANDARD ANALYSIS FUNCTION HAS BEEN REMOVED ---
 
-def run_enhanced_analysis(df, n_clusters, contamination, n_components=None):
+def run_enhanced_analysis(df, n_clusters):
     """
-    Runs the enhanced analysis using the new custom EnhancedKMeans algorithm
-    with optional PCA.
+    Runs the enhanced analysis (IF + K-Means) WITH hard-coded best parameters.
     """
-    X_processed, df_with_features = prepare_data_for_clustering(df, n_components)
+    # --- HARD-CODED OPTIMAL PARAMETERS ---
+    # We use the best parameters we found during our research.
+    # PCA=2 gives a great 2D visualization, and 10% contamination is a robust default.
+    N_COMPONENTS = 2
+    CONTAMINATION = 0.1
+    # --- ---------------------------- ---
+
+    X_processed, df_with_features = prepare_data_for_clustering(df, n_components=N_COMPONENTS)
 
     try:
-        # --- USE YOUR NEW ALGORITHM ---
         enhanced_model = EnhancedKMeans(
             n_clusters=n_clusters,
-            contamination=contamination,
+            contamination=CONTAMINATION,
             random_state=42
         )
         labels = enhanced_model.fit_predict(X_processed)
-        # --- END OF NEW IMPLEMENTATION ---
 
         # Filter out the outliers (labeled as -1) for metric calculation
         inlier_mask = labels != -1
-        X_inliers = X_processed[inlier_mask]
-        labels_inliers = labels[inlier_mask]
         
-        if len(labels_inliers) < 2:
+        if len(labels[inlier_mask]) < 2:
              return {'error': "Not enough data points remained after outlier removal to calculate performance metrics."}
 
+        # --- ROBUST FIX for 'cluster' column ---
+        if 'cluster' in df_with_features.columns:
+            df_with_features = df_with_features.drop(columns=['cluster'])
+        df_with_features['cluster'] = labels
+        # --- END FIX ---
+        
         results = {
-            'metrics': {
-                'inertia': enhanced_model.inertia_,
-                'silhouette': silhouette_score(X_inliers, labels_inliers),
-                'dbi': davies_bouldin_score(X_inliers, labels_inliers)
-            },
-            'data': df_with_features.assign(cluster=labels)
+            # We no longer need to calculate metrics, but we pass the data
+            'data': df_with_features,
+            'pca_components': N_COMPONENTS, # Pass n_components for visualization logic
+            'X_processed': X_processed, 
+            'inlier_mask': inlier_mask 
         }
         return results
 

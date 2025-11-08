@@ -8,9 +8,10 @@ def load_and_clean_data(uploaded_file):
     Loads data from an uploaded CSV and removes empty 'Unnamed' columns.
     """
     try:
+        # Allow loading from a path (string) or an uploaded file object
         df = pd.read_csv(uploaded_file)
         df = df.loc[:, ~df.columns.str.startswith('Unnamed')]
-        st.success("Data loaded and preliminary cleaning complete.")
+       
         return df
     except Exception as e:
         st.error(f"Error loading data: {e}")
@@ -39,13 +40,14 @@ def filter_for_fake_news(df, label_col, filter_text):
 def auto_detect_columns(columns):
     """
     Scans column names and automatically detects the most likely candidates
-    for location, timestamp, region, and label.
+    for location, timestamp, region, label, and source.
     """
     detected_cols = {
         'location': None,
         'timestamp': None,
         'region': None,
-        'label': None
+        'label': None,
+        'source': None  # NEW
     }
     
     # Define keywords for each type of column, from most to least likely
@@ -53,7 +55,8 @@ def auto_detect_columns(columns):
         'location': ['location', 'loc', 'city', 'address', 'area'],
         'timestamp': ['timestamp', 'time', 'date'],
         'region': ['region', 'province'],
-        'label': ['label', 'credible', 'credibility', 'type']
+        'label': ['label', 'credible', 'credibility', 'type'],
+        'source': ['brand', 'source', 'publisher', 'news_source'] # UPDATED to check for 'brand' first
     }
 
     remaining_columns = list(columns)
@@ -70,12 +73,12 @@ def auto_detect_columns(columns):
     return detected_cols
 
 @st.cache_data
-def geocode_dataframe(df_processed, loc_col, time_col, region_col=None):
+def geocode_dataframe(df_processed, loc_col, time_col, source_col, label_col, region_col=None):
     """
     Takes a DataFrame, keeps only the essential columns, and geocodes the location column.
     """
     # Step 1: Select only the essential columns the user mapped
-    columns_to_keep = [loc_col, time_col]
+    columns_to_keep = [loc_col, time_col, source_col, label_col] # ADDED source and label
     if region_col:
         columns_to_keep.append(region_col)
     
@@ -83,11 +86,11 @@ def geocode_dataframe(df_processed, loc_col, time_col, region_col=None):
     
     # Step 2: Drop rows with empty values in the essential columns
     rows_before = len(df_clean)
-    df_clean.dropna(subset=[loc_col, time_col], inplace=True)
+    df_clean.dropna(subset=[loc_col, time_col, source_col, label_col], inplace=True) # ADDED source and label
     rows_after = len(df_clean)
     
     if rows_after < rows_before:
-        st.success(f"Preprocessing: Removed {rows_before - rows_after} empty rows (based on location/timestamp).")
+        st.success(f"Preprocessing: Removed {rows_before - rows_after} empty rows (based on mapped columns).")
     
     if len(df_clean) == 0:
         st.error("No valid data remained after cleaning empty rows.")
@@ -125,12 +128,28 @@ def geocode_dataframe(df_processed, loc_col, time_col, region_col=None):
             return None
         
         # Step 4: Final Preparation
+        # This line CREATES the 'timestamp' column as a datetime object
         df_clean['timestamp'] = pd.to_datetime(df_clean[time_col], dayfirst=True, errors='coerce')
         df_clean.dropna(subset=['timestamp'], inplace=True)
         
-        final_df = df_clean.rename(columns={loc_col: 'location'})
-        if region_col in final_df.columns:
-                 final_df = final_df.rename(columns={region_col: 'region'})
+        # Rename all columns to standard names for the app
+        final_df = df_clean.rename(columns={
+            loc_col: 'location',
+            # --- FIX IS HERE ---
+            # The line 'time_col: 'timestamp',' was removed.
+            # This prevents overwriting the correct datetime column.
+            # We also no longer need to keep the original time_col.
+            # --- END FIX ---
+            source_col: 'source',
+            label_col: 'label'
+        })
+        
+        # We can also drop the original time_col now
+        if time_col in final_df.columns and time_col != 'timestamp':
+            final_df = final_df.drop(columns=[time_col])
+        
+        if region_col and region_col in final_df.columns:
+            final_df = final_df.rename(columns={region_col: 'region'})
             
         st.success(f"Final data preparation complete. Ready for analysis. Total records: {len(final_df)}.")
         return final_df

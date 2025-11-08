@@ -1,201 +1,326 @@
+# app.py
 import streamlit as st
-import pandas as pd
-from data_processing import load_and_clean_data, filter_for_fake_news, geocode_dataframe, auto_detect_columns
-from analysis import run_standard_analysis, run_enhanced_analysis, find_optimal_k
-from ui_components import (
-    display_evaluation_metrics,
-    display_spatial_visualizations,
-    display_temporal_patterns,
-    display_dynamic_interpretation,
-    display_elbow_plot
-)
+import streamlit_authenticator as stauth
+import yaml
+from yaml.loader import SafeLoader
+import base64
+
+# --- Function to encode image ---
+def get_base64_image(image_path):
+    with open(image_path, "rb") as img_file:
+        return base64.b64encode(img_file.read()).decode()
 
 # --- App Configuration ---
 st.set_page_config(
-    page_title="K-Means Clustering Simulation",
-    page_icon="🗺️",
+    page_title="TalaSuri: A Spatio-Temporal Fake News Detection and Localization System",
+    page_icon="📊",
     layout="wide"
 )
 
-# --- App State Management ---
-# --- App State Management ---
-if 'step' not in st.session_state:
-    st.session_state.step = "upload"
-if 'data' not in st.session_state:
-    st.session_state.data = None
-if 'detected_cols' not in st.session_state:
-    st.session_state.detected_cols = {}
-if 'prepared_data' not in st.session_state:
-    st.session_state.prepared_data = None
-if 'standard_results' not in st.session_state:
-    st.session_state.standard_results = None
-if 'enhanced_results' not in st.session_state:
-    st.session_state.enhanced_results = None
-if 'optimal_k' not in st.session_state:
-    st.session_state.optimal_k = 4 # Default to 4
-if 'inertias' not in st.session_state:
-    st.session_state.inertias = None
-
-
-# --- Main App UI ---
-st.title("K-Means Clustering Simulation")
-
-
-
-# --- STEP 1: UPLOAD & FILTER ---
-if st.session_state.step == "upload":
-    st.header("Step 1: Upload & Preprocess Data")
-    uploaded_file = st.file_uploader("Upload your CSV data", type=['csv'])
-
-    if uploaded_file:
-        raw_data = load_and_clean_data(uploaded_file)
-        if not raw_data.empty:
-            st.session_state.data = raw_data
-            st.dataframe(st.session_state.data.head())
-
-            detected = auto_detect_columns(st.session_state.data.columns)
-            
-            if st.checkbox("Optional: Filter for Fake News"):
-                label_col_index = list(st.session_state.data.columns).index(detected['label']) if detected['label'] else 0
-                label_col = st.selectbox("Select the credibility label column:", st.session_state.data.columns, index=label_col_index)
-                filter_text = st.text_input("Enter text that identifies fake news (e.g., 'not credible'):", "not credible")
-                
-                if st.button("Apply Filter and Proceed to Mapping"):
-                    filtered_data = filter_for_fake_news(st.session_state.data, label_col, filter_text)
-                    if filtered_data is not None and not filtered_data.empty:
-                        st.session_state.data = filtered_data
-                        st.session_state.step = "mapping"
-                        st.rerun()
-            else:
-                if st.button("Proceed to Mapping"):
-                    st.session_state.step = "mapping"
-                    st.rerun()
-
-# --- STEP 2: COLUMN MAPPING ---
-if st.session_state.step == "mapping":
-    st.header("Step 2: Confirm Data Columns")
-    st.info("The system has automatically detected columns. Please review and confirm.")
-
-    all_columns = st.session_state.data.columns.tolist()
-    if not st.session_state.detected_cols:
-         st.session_state.detected_cols = auto_detect_columns(all_columns)
-    
-    loc_col = st.selectbox("Location Column:", all_columns, index=all_columns.index(st.session_state.detected_cols['location']) if st.session_state.detected_cols['location'] else 0)
-    time_col = st.selectbox("Timestamp Column:", all_columns, index=all_columns.index(st.session_state.detected_cols['timestamp']) if st.session_state.detected_cols['timestamp'] else 1)
-    
-    if st.button("Confirm Columns & Prepare Data"):
-        with st.spinner("Preparing data... This may take a while."):
-            prepared_data = geocode_dataframe(st.session_state.data, loc_col, time_col)
-
-        if prepared_data is not None and not prepared_data.empty:
-            st.session_state.prepared_data = prepared_data
-            st.session_state.step = "find_k" # Go to the new step
-            st.rerun()
-
-# --- NEW STEP 3: FIND OPTIMAL K ---
-if st.session_state.step == "find_k":
-    st.header("Step 3: Determine Optimal Number of Clusters")
-    
-    if st.button("Find Optimal K using Elbow Method"):
-        with st.spinner("Calculating optimal K... This may take a moment."):
-            # We only need the scaled data for this calculation
-            from analysis import prepare_data_for_clustering
-            scaled_data, _ = prepare_data_for_clustering(st.session_state.prepared_data)
-            inertias, optimal_k = find_optimal_k(scaled_data)
-            st.session_state.inertias = inertias
-            st.session_state.optimal_k = optimal_k
-        st.rerun()
-            
-    if st.session_state.inertias:
-        display_elbow_plot(st.session_state.inertias, st.session_state.optimal_k)
-        st.write("---")
-        if st.button("Proceed to Main Analysis"):
-            st.session_state.step = "analysis"
-            st.rerun()
-
-
-# --- STEP 4: RUN ANALYSIS ---
-if st.session_state.step == "analysis":
-    st.header("Step 4: Run Analysis")
-    st.sidebar.header("Analysis Parameters")
-    
-    # CONSOLIDATED PARAMETERS IN SIDEBAR
-    st.sidebar.write("Set the parameters for the analyses:")
-    n_clusters = st.sidebar.slider(
-        "Number of Clusters (K)", 
-        min_value=2, 
-        max_value=10, 
-        value=st.session_state.optimal_k, 
-        key="k_clusters"
-    )
-
-    # NEW: Slider for PCA components
-    n_components = st.sidebar.slider(
-        "Number of PCA Components (0 for no PCA)", 
-        min_value=0, 
-        max_value=4, 
-        value=4,
-        key="n_components"
+# --- LOGIN MODAL DIALOG ---
+@st.dialog("Account Login")
+def login_modal():
+    """Modal dialog for user login"""
+    # Add background image to modal
+    st.markdown(
+        f"""
+        <style>
+        [data-testid="stDialog"] > div:first-child {{
+            background: linear-gradient(rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.92)), url(data:image/jpeg;base64,{get_base64_image("assets/blb.jpg")}) !important;
+            background-size: cover !important;
+            background-position: center !important;
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True
     )
     
-    st.sidebar.write("---") 
-    st.sidebar.write("Parameter for Enhanced Analysis only:")
-    contamination = st.sidebar.selectbox(
-        "Estimated Outlier Percentage",
-        [1, 5, 10, 15, 20, 25],
-        index=2 
-    ) / 100.0
+    st.markdown("Please enter your credentials to access the system.")
+    
+    # Render the login form inside the modal
+    authenticator.login(location='main', fields={'Form name': ''})
+    
+    if st.session_state.authentication_status == False:
+        st.error('Username/password is incorrect')
+    elif st.session_state.authentication_status == None:
+        st.warning('Please enter your username and password.')
+    elif st.session_state.authentication_status:
+        st.success(f'Welcome {st.session_state.name}!')
+        st.info('Redirecting to Analytics Tool...')
+        # Automatically redirect to Analytics Tool after successful login
+        st.switch_page("pages/2_Analytics_Tool.py")
 
-    st.info("First, run the baseline Standard K-Means analysis. Then, run the Enhanced K-Means analysis to see the improvement.")
-    st.write("---")
-
-    # Part A: Standard K-Means
-    st.subheader("Standard K-Means Analysis")
-
-    if st.button("Run Standard Analysis"):
-        with st.spinner("Running Standard K-Means..."):
-            st.session_state.standard_results = run_standard_analysis(st.session_state.prepared_data, n_clusters, n_components if n_components > 0 else None)
-        st.rerun()
-
-    # Part B: Enhanced K-Means (appears after standard is done)
-    if st.session_state.standard_results:
-        st.subheader("Standard K-Means Results Preview")
-        metrics = st.session_state.standard_results['metrics']
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Inertia", f"{metrics['inertia']:.2f}")
-        col2.metric("Silhouette Score", f"{metrics['silhouette']:.2f}")
-        col3.metric("Davies-Bouldin Index", f"{metrics['dbi']:.2f}")
-        display_spatial_visualizations(st.session_state.standard_results, None, single_view=True, title="Standard K-Means Scatter Plot")
+# --- STYLES (CSS) ---
+st.markdown(
+    """
+    <style>
+        /* --- Hide sidebar on landing page --- */
+        [data-testid="stSidebar"] {
+            display: none;
+        }
         
-        st.write("---")
-        st.subheader("Enhanced K-Means Analysis")
+        /* --- Reduced padding in main container --- */
+        .main .block-container {
+            padding-top: 2rem;
+            padding-bottom: 2rem;
+            padding-left: 1.5rem;
+            padding-right: 1.5rem;
+        }
+        
+        /* --- Reduce spacing between sections --- */
+        .main h2 {
+            margin-top: 1.5rem;
+            margin-bottom: 1rem;
+        }
+        
+        /* --- Card hover effects --- */
+        [data-testid="stVerticalBlock"] [data-testid="column"] > div {
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        [data-testid="stVerticalBlock"] [data-testid="column"] > div:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.2);
+        }
+        
+        /* --- Alternating section backgrounds --- */
+        [data-testid="stVerticalBlock"]:nth-child(4) {
+            background-color: #f9fafb;
+            padding: 2rem;
+            border-radius: 15px;
+            margin: 1rem 0;
+        }
+        
+        /* --- Footer styling - compact and centered --- */
+        .footer {
+            text-align: center;
+            padding: 0.75rem;
+            margin-top: 2rem;
+            margin-bottom: 0.5rem;
+            margin-left: auto;
+            margin-right: auto;
+            color: black;
+            border-radius: 25px;
+            font-weight: 500;
+            font-size: 0.8rem;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
-        if st.button("Run Enhanced Analysis"):
-            with st.spinner("Running Enhanced K-Means..."):
-                st.session_state.enhanced_results = run_enhanced_analysis(st.session_state.prepared_data, n_clusters, contamination, n_components if n_components > 0 else None)
-            st.rerun()
+# --- USER AUTHENTICATION ---
+with open('config.yaml') as file:
+    config = yaml.load(file, Loader=SafeLoader)
+
+authenticator = stauth.Authenticate(
+    config['credentials'],
+    config['cookie']['name'],
+    config['cookie']['key'],
+    config['cookie']['expiry_days']
+)
+
+# --- SESSION STATE ---
+default_session_state = {
+    "step": "upload", "data": None, "detected_cols": {}, "prepared_data": None,
+    "analysis_results": None, "optimal_k": 4, "inertias": None
+}
+for key, value in default_session_state.items():
+    if key not in st.session_state:
+        st.session_state[key] = value
+
+authentication_status = st.session_state.get('authentication_status')
+
+# --- Encode background images ---
+bg_image = get_base64_image("assets/blb.jpg")
+login_bg_image = get_base64_image("assets/blb.jpg")
+
+# --- PAGE LAYOUT (Two Columns) ---
+col1, col2 = st.columns([1.5, 1], gap="large")
+
+# --- COLUMN 1: Content (Left) ---
+with col1:
+    # Hero section - Shortened and more impactful
+    st.markdown(
+    """
+    <h1 style='font-size: 3rem; font-weight: 800;
+               -webkit-background-clip: text; -webkit-text-fill-color: blue;
+               margin-bottom: 0;'>
+    TalaSuri
+    </h1>
+    
+    <p style='font-size: 1.1rem; color: #6b7280; font-weight: 600;
+              margin-top: 0; margin-bottom: 0;'>
+    A Spatio-Temporal Fake News Detection System
+    </p>
+    
+    <p style='font-size: 1rem; color: #4b5563; margin-bottom: 0.1rem; line-height: 1.6;
+              margin-top: 0;'>
+    Uncover patterns in news reports. Discover <strong style='color: #667eea;'>who</strong> is reporting, 
+    <strong style='color: #667eea;'>where</strong> it's happening, and <strong style='color: #667eea;'>when</strong>.
+    </p>
+    """,
+    unsafe_allow_html=True
+)
+
+    st.markdown('<h2 style="color:blue;"> What You Can Discover</h2>', unsafe_allow_html=True)
+    
+    
+    
+    # --- IMPROVED CARD LAYOUT (Discover) - With background images ---
+    c1, c2, c3 = st.columns(3, gap="medium")
+    
+    with c1:
+        st.markdown(
+            f"""
+            <div style='background: linear-gradient(rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.85)), url(data:image/jpeg;base64,{bg_image}); 
+            background-size: cover; background-position: center; padding: 1.5rem; border-radius: 10px; border: 1px solid #e5e7eb; min-height: 180px;'>
+                <h4 style='color: #1f2937; margin-bottom: 0.5rem;'>✅ Source Credibility</h4>
+                <p style='color: #4b5563; font-size: 0.95rem;'>Identify credible vs. non-credible news sources with visual analytics.</p>
+                <p style='color: #6b7280; font-size: 0.85rem;'>📊 Real-time verification</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    with c2:
+        st.markdown(
+            f"""
+            <div style='background: linear-gradient(rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.85)), url(data:image/jpeg;base64,{bg_image}); 
+            background-size: cover; background-position: center; padding: 1.5rem; border-radius: 10px; border: 1px solid #e5e7eb; min-height: 180px;'>
+                <h4 style='color: #1f2937; margin-bottom: 0.5rem;'>📍 Geographical Hotspots</h4>
+                <p style='color: #4b5563; font-size: 0.95rem;'>Interactive map of news activity locations across the Philippines.</p>
+                <p style='color: #6b7280; font-size: 0.85rem;'>🗺️ Interactive mapping</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    with c3:
+        st.markdown(
+            f"""
+            <div style='background: linear-gradient(rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.85)), url(data:image/jpeg;base64,{bg_image}); 
+            background-size: cover; background-position: center; padding: 1.5rem; border-radius: 10px; border: 1px solid #e5e7eb; min-height: 180px;'>
+                <h4 style='color: #1f2937; margin-bottom: 0.5rem;'>⏰ Peak Activity Times</h4>
+                <p style='color: #4b5563; font-size: 0.95rem;'>Discover busiest days and hours for news reporting.</p>
+                <p style='color: #6b7280; font-size: 0.85rem;'>📈 Time-based insights</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    
+    st.markdown('<h2 style="color:blue;">How It Works</h2>', unsafe_allow_html=True)
+    
+    # --- IMPROVED CARD LAYOUT (How It Works) - With background images ---
+    c4, c5, c6 = st.columns(3, gap="medium")
+    with c4:
+        st.markdown(
+            f"""
+            <div style='background: linear-gradient(rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.85)), url(data:image/jpeg;base64,{bg_image}); 
+            background-size: cover; background-position: center; padding: 1.5rem; border-radius: 10px; border: 1px solid #e5e7eb; min-height: 150px;'>
+                <h4 style='color: #1f2937; margin-bottom: 0.5rem;'>1️⃣ Upload Data</h4>
+                <p style='color: #4b5563; font-size: 0.95rem;'>Start with a CSV file containing your news data.</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    with c5:
+        st.markdown(
+            f"""
+            <div style='background: linear-gradient(rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.85)), url(data:image/jpeg;base64,{bg_image}); 
+            background-size: cover; background-position: center; padding: 1.5rem; border-radius: 10px; border: 1px solid #e5e7eb; min-height: 150px;'>
+                <h4 style='color: #1f2937; margin-bottom: 0.5rem;'>2️⃣ Automatic Analysis</h4>
+                <p style='color: #4b5563; font-size: 0.95rem;'>The System cleans, processes, and analyzes automatically.</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    with c6:
+        st.markdown(
+            f"""
+            <div style='background: linear-gradient(rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.85)), url(data:image/jpeg;base64,{bg_image}); 
+            background-size: cover; background-position: center; padding: 1.5rem; border-radius: 10px; border: 1px solid #e5e7eb; min-height: 150px;'>
+                <h4 style='color: #1f2937; margin-bottom: 0.5rem;'>3️⃣ Get Insights</h4>
+                <p style='color: #4b5563; font-size: 0.95rem;'>Explore visualizations and download reports.</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+# --- COLUMN 2: Login Box (Right) ---
+with col2:
+    # Add vertical spacing to center the login box
+    st.markdown("<br><br><br><br><br><br><br><br>", unsafe_allow_html=True)
+    
+    # Add inline style for login box background
+    st.markdown(
+        f"""
+        <style>
+        [data-testid="column"]:last-child [data-testid="stVerticalBlock"] > div:has(div[data-testid="stVerticalBlock"]) {{
+            background: linear-gradient(rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.9)), url(data:image/jpeg;base64,{login_bg_image}) !important;
+            background-size: cover !important;
+            background-position: center !important;
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+    
+    with st.container(border=True):
+        
+        if authentication_status:
+            # --- Logged-In State ---
+            st.markdown("### 👋 Welcome Back!")
+            st.success(f"**{st.session_state.name}**")
+            st.markdown("---")
+            st.page_link(
+                "pages/2_Analytics_Tool.py", 
+                label="🚀 Go to Analytics Tool", 
+                icon="📊", 
+                use_container_width=True
+            )
             
-        if st.session_state.enhanced_results:
-            st.subheader("Enhanced K-Means Results Preview")
-            if 'error' in st.session_state.enhanced_results:
-                st.error(f"Analysis failed: {st.session_state.enhanced_results['error']}")
-            else:
-                metrics_enh = st.session_state.enhanced_results['metrics']
-                col1_enh, col2_enh, col3_enh = st.columns(3)
-                col1_enh.metric("Inertia", f"{metrics_enh['inertia']:.2f}")
-                col2_enh.metric("Silhouette Score", f"{metrics_enh['silhouette']:.2f}")
-                col3_enh.metric("Davies-Bouldin Index", f"{metrics_enh['dbi']:.2f}")
-                display_spatial_visualizations(None, st.session_state.enhanced_results, single_view=True, title="Enhanced K-Means Scatter Plot")
-
-    # Part C: Final Comparison (appears after both are done)
-    if st.session_state.standard_results and st.session_state.enhanced_results:
-        st.write("---")
-        st.header("Final Comparison and Results")
-
-        if 'error' in st.session_state.enhanced_results:
-             pass
+            st.markdown("<br>", unsafe_allow_html=True)
+            
+            # --- Logout Button ---
+            if authenticator.logout('🚪 Logout', 'main'):
+                # Reset session state on logout
+                for key, value in default_session_state.items():
+                    st.session_state[key] = value
+                
+                # Rerun to refresh the page and show logged-out state
+                st.rerun()
         else:
-            display_evaluation_metrics(st.session_state.standard_results, st.session_state.enhanced_results)
-            display_spatial_visualizations(st.session_state.standard_results, st.session_state.enhanced_results)
-            display_temporal_patterns(st.session_state.enhanced_results)
-            display_dynamic_interpretation(st.session_state.standard_results, st.session_state.enhanced_results)
+            # --- Logged-Out State ---
+            st.markdown("### 🔐 Access the Tool")
+            st.info("Log in to start analyzing your news data")
+            
+            # Button to trigger login modal
+            if st.button(
+                "🔑 Proceed to Login", 
+                type="primary",
+                use_container_width=True
+            ):
+                login_modal()
+            
+            # --- How to Use the System ---
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown("---")
+            st.markdown("##### 📖 How to Use the System")
+            st.markdown(
+                """
+                <div style='font-size: 0.9rem; color: #4b5563; line-height: 1.8;'>
+                <strong>1.</strong> Upload your CSV file<br>
+                <strong>2.</strong> Wait for automatic analysis<br>
+                <strong>3.</strong> Click on cards to view results<br>
+                <strong>4.</strong> Download your reports
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.caption("Need an account? Contact your system administrator")
+
+# --- FOOTER ---
+st.markdown(
+    '<div class="footer">All Rights Reserved 2025</div>', 
+    unsafe_allow_html=True
+)

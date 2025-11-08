@@ -1,0 +1,20 @@
+credentials:
+  usernames:
+    jdoe: # This is a username
+      email: jdoe@radiostation.com
+      name: John Doe
+      password: '$2b$12$8w7z7ueYjD8PhhzhR0nhxeFMerge28TthxvpIIbJFc5g1.JDRnxF.' # e.g., '$2b$12$E...Xy'
+    
+    admin: # This is a second username
+      email: admin@radiostation.com
+      name: Admin
+      password: '$2b$12$oEaVQ31YDhWk7e7PLxYGkuoIwn/oOx2bkC/85OkgS3ex.RskGVX9e' # e.g., '$2b$12$f...K.'
+
+cookie:
+  name: some_cookie_name
+  key: 'some_secret_key_123'
+  expiry_days: 30
+
+preauthorized:
+  emails:
+    - melsmith@gmail.com
